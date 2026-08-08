@@ -2,6 +2,3 @@
 	path = src/cpr_gazebo
 	url = https://github.com/clearpathrobotics/cpr_gazebo.git
 
-[submodule "src/yocs_velocity_smoother"]
-        path = src/yocs_velocity_smoother
-        url = https://github.com/chvmp/yocs_velocity_smoother.git
