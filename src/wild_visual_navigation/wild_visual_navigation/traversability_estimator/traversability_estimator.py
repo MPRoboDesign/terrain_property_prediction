@@ -3,7 +3,18 @@
 # All rights reserved. Licensed under the MIT license.
 # See LICENSE file in the project root for details.
 #
-from wild_visual_navigation.feature_extractor import FeatureExtractor
+# FeatureExtractor is unused in this file - self._feature_extractor/
+# self._use_feature_extractor (see change_device() below) are never assigned
+# anywhere in this class, so the only reference to them is already dead code.
+# Importing it anyway pulls in feature_extractor/dino_interface.py's hard
+# `from stego.backbones.backbone import get_backbone`, an undocumented
+# dependency with no pip package and no vendored copy in this repo - pulling
+# it in just to leave it unused would force every consumer of
+# TraversabilityEstimator (including force-tracking-only setups like
+# quadronior_fcf_trav, which never touches image features at all) to have
+# `stego` installed for no reason. Left commented, not deleted, in case a
+# future change actually starts using self._feature_extractor.
+# from wild_visual_navigation.feature_extractor import FeatureExtractor
 from wild_visual_navigation.image_projector import ImageProjector
 from wild_visual_navigation.model import get_model
 from wild_visual_navigation.cfg import ExperimentParams

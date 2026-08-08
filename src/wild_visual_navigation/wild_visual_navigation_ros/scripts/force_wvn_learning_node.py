@@ -185,7 +185,19 @@ class WvnLearning:
         # Override the empty dataclass with values from ros parmeter server
         with read_write(self._ros_params):
             for k in self._ros_params.keys():
-                self._ros_params[k] = rospy.get_param(f"~{k}")
+                # camera_topics: {} in a rosparam-loaded yaml never actually
+                # reaches the parameter server - rosparam load's recursive
+                # dict upload recurses into empty dicts and never calls
+                # set_param for them, so the key is silently dropped rather
+                # than set to {} (confirmed: even a bare `rosparam set
+                # /x '{}'` leaves /x unset). Force-tracking-only setups
+                # (e.g. quadronior_fcf_trav) rely on an empty camera_topics
+                # to skip visual setup below, so default it here instead of
+                # requiring something rosparam can't actually represent.
+                if k == "camera_topics":
+                    self._ros_params[k] = rospy.get_param(f"~{k}", {})
+                else:
+                    self._ros_params[k] = rospy.get_param(f"~{k}")
 
         self._ros_params.robot_height = rospy.get_param("~robot_height")  # TODO robot_height currently not used
 
@@ -253,70 +265,82 @@ class WvnLearning:
             self._robot_state_sub.registerCallback(self.robot_state_callback)
 
             self._camera_handler = {}
-            # Image callback
-            for cam in self._ros_params.camera_topics:
-                # Initialize camera handler for given cam
-                self._camera_handler[cam] = {}
-                # Store camera name
-                self._ros_params.camera_topics[cam]["name"] = cam
+            # camera_topics is intentionally empty in force-tracking-only setups
+            # (e.g. quadronior_fcf_trav) - upstream this loop always ran and then
+            # unconditionally blocked on rospy.wait_for_message() for a camera
+            # feature topic, which never arrives when no feature-extractor node
+            # is running. Skip visual setup entirely in that case rather than
+            # hang forever waiting on it.
+            if self._ros_params.camera_topics:
+                # Image callback
+                for cam in self._ros_params.camera_topics:
+                    # Initialize camera handler for given cam
+                    self._camera_handler[cam] = {}
+                    # Store camera name
+                    self._ros_params.camera_topics[cam]["name"] = cam
 
-                # Set subscribers
-                if self._ros_params.mode == WVNMode.DEBUG:
-                    # In debug mode additionally send the image to the callback function
-                    self._visualizer = LearningVisualizer()
+                    # Set subscribers
+                    if self._ros_params.mode == WVNMode.DEBUG:
+                        # In debug mode additionally send the image to the callback function
+                        self._visualizer = LearningVisualizer()
 
-                    imagefeat_sub = message_filters.Subscriber(
-                        f"/wild_visual_navigation_node/{cam}/feat", ImageFeatures
-                    )
-                    info_sub = message_filters.Subscriber(f"/wild_visual_navigation_node/{cam}/camera_info", CameraInfo)
-                    image_sub = message_filters.Subscriber(f"/wild_visual_navigation_node/{cam}/image_input", Image)
-                    sync = message_filters.ApproximateTimeSynchronizer(
-                        [imagefeat_sub, info_sub, image_sub], queue_size=4, slop=0.5
-                    )
-                    sync.registerCallback(self.imagefeat_callback, self._ros_params.camera_topics[cam])
+                        imagefeat_sub = message_filters.Subscriber(
+                            f"/wild_visual_navigation_node/{cam}/feat", ImageFeatures
+                        )
+                        info_sub = message_filters.Subscriber(f"/wild_visual_navigation_node/{cam}/camera_info", CameraInfo)
+                        image_sub = message_filters.Subscriber(f"/wild_visual_navigation_node/{cam}/image_input", Image)
+                        sync = message_filters.ApproximateTimeSynchronizer(
+                            [imagefeat_sub, info_sub, image_sub], queue_size=4, slop=0.5
+                        )
+                        sync.registerCallback(self.imagefeat_callback, self._ros_params.camera_topics[cam])
 
-                    last_image_overlay_pub = rospy.Publisher(
-                        f"/wild_visual_navigation_node/{cam}/debug/last_node_image_overlay",
-                        Image,
-                        queue_size=10,
-                    )
+                        last_image_overlay_pub = rospy.Publisher(
+                            f"/wild_visual_navigation_node/{cam}/debug/last_node_image_overlay",
+                            Image,
+                            queue_size=10,
+                        )
 
-                    self._camera_handler[cam]["debug"] = {}
-                    self._camera_handler[cam]["debug"]["image_overlay"] = last_image_overlay_pub
+                        self._camera_handler[cam]["debug"] = {}
+                        self._camera_handler[cam]["debug"]["image_overlay"] = last_image_overlay_pub
 
-                else:
-                    print(f"/wild_visual_navigation_node/{cam}/feat")
-                    imagefeat_sub = message_filters.Subscriber(
-                        f"/wild_visual_navigation_node/{cam}/feat", ImageFeatures
-                    )
-                    info_sub = message_filters.Subscriber(f"/wild_visual_navigation_node/{cam}/camera_info", CameraInfo)
-                    sync = message_filters.ApproximateTimeSynchronizer(
-                        [imagefeat_sub, info_sub], queue_size=4, slop=0.5
-                    )
-                    sync.registerCallback(self.imagefeat_callback, self._ros_params.camera_topics[cam])
+                    else:
+                        print(f"/wild_visual_navigation_node/{cam}/feat")
+                        imagefeat_sub = message_filters.Subscriber(
+                            f"/wild_visual_navigation_node/{cam}/feat", ImageFeatures
+                        )
+                        info_sub = message_filters.Subscriber(f"/wild_visual_navigation_node/{cam}/camera_info", CameraInfo)
+                        sync = message_filters.ApproximateTimeSynchronizer(
+                            [imagefeat_sub, info_sub], queue_size=4, slop=0.5
+                        )
+                        sync.registerCallback(self.imagefeat_callback, self._ros_params.camera_topics[cam])
 
-            # Wait for features message to determine the input size of the model
-            cam = list(self._ros_params.camera_topics.keys())[0]
+                # Wait for features message to determine the input size of the model
+                cam = list(self._ros_params.camera_topics.keys())[0]
 
-            exists_camera_used_for_training = False
-            for cam in self._ros_params.camera_topics:
-                rospy.loginfo(f"[{self._node_name}] Waiting for feat topic {cam}...")
-                if self._ros_params.camera_topics[cam]["use_for_training"]:
-                    feat_msg = rospy.wait_for_message(f"/wild_visual_navigation_node/{cam}/feat", ImageFeatures)
-                    exists_camera_used_for_training = True
+                exists_camera_used_for_training = False
+                for cam in self._ros_params.camera_topics:
+                    rospy.loginfo(f"[{self._node_name}] Waiting for feat topic {cam}...")
+                    if self._ros_params.camera_topics[cam]["use_for_training"]:
+                        feat_msg = rospy.wait_for_message(f"/wild_visual_navigation_node/{cam}/feat", ImageFeatures)
+                        exists_camera_used_for_training = True
 
-            if not exists_camera_used_for_training:
-                rospy.logerror("No camera selected for training")
-                sys.exit(-1)
+                if not exists_camera_used_for_training:
+                    rospy.logerror("No camera selected for training")
+                    sys.exit(-1)
 
-            feature_dim = int(feat_msg.features.layout.dim[1].size)
-            # Modify the parameters
-            with read_write(self._params):
-                self._params.model.simple_mlp_cfg.input_size = feature_dim
-                self._params.model.double_mlp_cfg.input_size = feature_dim
-                self._params.model.simple_gcn_cfg.input_size = feature_dim
-                self._params.model.linear_rnvp_cfg.input_size = feature_dim
-            rospy.loginfo(f"[{self._node_name}] Done")
+                feature_dim = int(feat_msg.features.layout.dim[1].size)
+                # Modify the parameters
+                with read_write(self._params):
+                    self._params.model.simple_mlp_cfg.input_size = feature_dim
+                    self._params.model.double_mlp_cfg.input_size = feature_dim
+                    self._params.model.simple_gcn_cfg.input_size = feature_dim
+                    self._params.model.linear_rnvp_cfg.input_size = feature_dim
+                rospy.loginfo(f"[{self._node_name}] Done")
+            else:
+                rospy.logwarn(
+                    f"[{self._node_name}] camera_topics is empty - running force-tracking-only, "
+                    "skipping visual feature setup (no feature-extractor node required)."
+                )
 
         # 3D outputs
         self._pub_debug_supervision_graph = rospy.Publisher(
