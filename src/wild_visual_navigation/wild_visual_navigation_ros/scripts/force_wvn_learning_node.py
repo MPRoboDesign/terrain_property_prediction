@@ -101,7 +101,7 @@ class WvnLearning:
             kf_meas_cov=10,
             kf_outlier_rejection="huber",
             kf_outlier_rejection_delta=0.5,
-            sigmoid_slope=20,
+            sigmoid_slope=10,
             sigmoid_cutoff=0.25,  # 0.2
             untraversable_thr=self._ros_params.untraversable_thr,  # 0.1
             time_horizon=0.05,
