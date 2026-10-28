@@ -22,7 +22,7 @@ struct DataNormalizer
     boost::circular_buffer<double> dataBuffer; ///< Circular buffer to store recent data points.
     double minValue; ///< Minimum value in the current buffer.
     double maxValue; ///< Maximum value in the current buffer.
-    std::vector<double> normalizedData; ///< Vector to store normalized data points.
+    boost::circular_buffer<double> normalizedData; ///< Recent normalized data points (bounded like dataBuffer; an unbounded vector here grew ~43 MB/h per node).
 
     /**
      * @brief Constructs a DataNormalizer with the specified buffer size and initial min/max values.
@@ -32,7 +32,7 @@ struct DataNormalizer
      */
     DataNormalizer(size_t bufferSize=100, double minVal=std::numeric_limits<double>::max(), 
                     double maxVal=-1)
-        : dataBuffer(bufferSize), minValue(minVal), maxValue(maxVal) {}
+        : dataBuffer(bufferSize), minValue(minVal), maxValue(maxVal), normalizedData(bufferSize) {}
 
     /**
      * @brief Adds a new data point to the buffer.
@@ -103,7 +103,7 @@ struct DataNormalizer
      */
     void getNormalizedData(std::vector<double>& normalizedDataOut) const
     {
-        normalizedDataOut = normalizedData;
+        normalizedDataOut.assign(normalizedData.begin(), normalizedData.end());
     }
 
     /**
